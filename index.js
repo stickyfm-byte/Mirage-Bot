@@ -1,6 +1,37 @@
 
 require('dotenv').config();
 
+// ========================================
+// STARTUP DIAGNOSTICS
+// ========================================
+
+function logMemory(stage) {
+  const memory = process.memoryUsage();
+  const mb = value => (value / 1024 / 1024).toFixed(1);
+  console.log(
+    `[memory] ${stage} | RSS ${mb(memory.rss)} MB | heap ${mb(memory.heapUsed)}/${mb(memory.heapTotal)} MB | external ${mb(memory.external)} MB`
+  );
+}
+
+console.log('[startup] Mirage Bot process launched.');
+console.log(`[startup] Node.js ${process.version} | platform ${process.platform}`);
+logMemory('process start');
+
+const memoryMonitor = setInterval(() => logMemory('runtime sample'), 10000);
+memoryMonitor.unref();
+
+process.on('uncaughtException', error => {
+  console.error('[process] Uncaught exception:', error);
+});
+
+process.on('unhandledRejection', reason => {
+  console.error('[process] Unhandled rejection:', reason);
+});
+
+process.on('warning', warning => {
+  console.warn('[process] Node warning:', warning);
+});
+
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -99,6 +130,9 @@ let trustedCheckSaveQueue = Promise.resolve();
 let deadlineTimer = null;
 let trustedCheckTimer = null;
 let trustedCheckRunning = false;
+
+client.on('error', error => console.error('[discord] Client error:', error));
+client.on('shardError', error => console.error('[discord] Gateway shard error:', error));
 
 // ========================================
 // SLASH COMMANDS
@@ -1457,13 +1491,28 @@ client.on('interactionCreate', async interaction => {
 
 (async () => {
   try {
+    console.log('[startup] Loading verification database...');
     await loadDatabase();
+    logMemory('after verification database');
+
+    console.log('[startup] Loading handbook database...');
     await loadHandbookDatabase();
+    logMemory('after handbook database');
+
+    console.log('[startup] Loading Trusted-check database...');
     await loadTrustedCheckDatabase();
+    logMemory('after Trusted-check database');
+
+    console.log('[startup] Registering Discord slash commands...');
     await registerCommands();
+    logMemory('after command registration');
+
+    console.log('[startup] Connecting to Discord gateway...');
     await client.login(DISCORD_TOKEN);
+    console.log('[startup] Discord login request completed.');
+    logMemory('after Discord login');
   } catch (error) {
-    console.error('Failed to start Mirage Bot:', error);
+    console.error('[startup] Failed to start Mirage Bot:', error);
     process.exit(1);
   }
 })();
