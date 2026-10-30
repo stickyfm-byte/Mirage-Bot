@@ -140,6 +140,11 @@ const commands = [
         .setDescription('The member who needs to accept the handbook.')
         .setRequired(true)
     ),
+
+  new SlashCommandBuilder()
+    .setName('trusted-check')
+    .setDescription('Manually start a Trusted role reaction check.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 ].map(command => command.toJSON());
 
 // ========================================
@@ -656,7 +661,7 @@ async function postTrustedCheck(guild) {
     trustedCheckDB.nextRunAt = Date.now() + randomTrustedCheckDelay();
     await saveTrustedCheckDatabase();
     console.log('No Trusted members found; this weekly check was skipped.');
-    return;
+    return false;
   }
 
   const startedAt = Date.now();
@@ -685,6 +690,7 @@ async function postTrustedCheck(guild) {
   await saveTrustedCheckDatabase();
 
   console.log(`Trusted check posted for ${memberIds.length} members.`);
+  return true;
 }
 
 async function fetchTrustedReactors(message) {
@@ -833,7 +839,7 @@ async function registerCommands() {
 
   console.log(
     'Registered commands: /verify-panel, /link, /verify-status, ' +
-    '/handbook-status, /handbook-resend'
+    '/handbook-status, /handbook-resend, /trusted-check'
   );
 }
 
@@ -1086,6 +1092,65 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (!interaction.isChatInputCommand()) return;
+
+    // ------------------------------------
+    // /TRUSTED-CHECK
+    // ------------------------------------
+
+    if (interaction.commandName === 'trusted-check') {
+      if (!interaction.inGuild()) {
+        return interaction.reply({
+          content: 'Use this command in the Mirage server.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+        return interaction.reply({
+          content: 'You need **Manage Server** permission to start a Trusted check.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (!TRUSTED_CHECK_CHANNEL_ID) {
+        return interaction.reply({
+          content: 'The Trusted check channel has not been configured. Set TRUSTED_CHECK_CHANNEL_ID in your environment variables.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (trustedCheckDB.activeCheck) {
+        return interaction.reply({
+          content: 'A Trusted role check is already active. Members must complete the current check before another can begin.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (trustedCheckRunning) {
+        return interaction.reply({
+          content: 'The Trusted check scheduler is currently processing. Please try again shortly.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      trustedCheckRunning = true;
+
+      try {
+        const posted = await postTrustedCheck(interaction.guild);
+
+        if (posted === false) {
+          return interaction.editReply('There are currently no members with the Trusted role, so no check was posted.');
+        }
+
+        return interaction.editReply('A Trusted role check has been posted. Members have 24 hours to react with ✅.');
+      } catch (error) {
+        console.error('Manual Trusted check failed:', error);
+        return interaction.editReply('The Trusted role check could not be started. Check the bot console for details.');
+      } finally {
+        trustedCheckRunning = false;
+      }
+    }
 
     // ------------------------------------
     // /VERIFY-PANEL
