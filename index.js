@@ -652,7 +652,6 @@ async function postTrustedCheck(guild) {
     throw new Error('Move the bot role above Trusted in the role hierarchy.');
   }
 
-  await guild.members.fetch();
   const memberIds = guild.members.cache
     .filter(member => !member.user.bot && member.roles.cache.has(TRUSTED_ROLE_ID))
     .map(member => member.id);
