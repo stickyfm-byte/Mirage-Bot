@@ -597,8 +597,8 @@ async function checkHandbookDeadlines() {
 }
 
 async function reconcileModerators(guild) {
-  await guild.members.fetch();
-
+  // Avoid fetching and caching every server member on startup; this can
+  // exceed the bot's memory limit on larger Discord servers.
   for (const member of guild.members.cache.values()) {
     if (!member.roles.cache.has(MODERATOR_ROLE_ID)) continue;
     if (hasAcceptedCurrentHandbook(member.id)) continue;
