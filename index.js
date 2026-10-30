@@ -15,9 +15,38 @@ function logMemory(stage) {
 
 console.log('[startup] Mirage Bot process launched.');
 console.log(`[startup] Node.js ${process.version} | platform ${process.platform}`);
+
+// Show what limits Node can actually see. If the V8 heap limit is far above
+// your host's RAM allowance, the garbage collector will happily let memory
+// grow until the host kills the process.
+try {
+  const heapLimitMb = (
+    require('node:v8').getHeapStatistics().heap_size_limit / 1024 / 1024
+  ).toFixed(0);
+  let cgroupLimit = 'unknown';
+  for (const file of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+    try {
+      const raw = require('node:fs').readFileSync(file, 'utf8').trim();
+      cgroupLimit = /^\d+$/.test(raw) && Number(raw) < 2 ** 50
+        ? `${(Number(raw) / 1024 / 1024).toFixed(0)} MB`
+        : 'none';
+      break;
+    } catch {}
+  }
+  console.log(`[startup] V8 heap limit ${heapLimitMb} MB | container memory limit ${cgroupLimit}`);
+  console.log(`[startup] NODE_OPTIONS=${process.env.NODE_OPTIONS || '(not set)'} | execArgv=${process.execArgv.join(' ') || '(none)'}`);
+} catch {}
+
 logMemory('process start');
 
-const memoryMonitor = setInterval(() => logMemory('runtime sample'), 10000);
+// Sampled once a minute (every 10 seconds was noisy). Also warns loudly when
+// the process gets close to a 1 GB host limit so it shows up in your console.
+const memoryMonitor = setInterval(() => {
+  logMemory('runtime sample');
+  if (process.memoryUsage().rss > 800 * 1024 * 1024) {
+    console.warn('[memory] WARNING: RSS is above 800 MB. Send this log to your developer.');
+  }
+}, 60 * 1000);
 memoryMonitor.unref();
 
 process.on('uncaughtException', error => {
@@ -44,6 +73,7 @@ const {
   EmbedBuilder,
   GatewayIntentBits,
   MessageFlags,
+  Options,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -103,11 +133,34 @@ const VERIFICATION_DATABASE = path.join(DATA_DIR, 'verification.json');
 const HANDBOOK_DATABASE = path.join(DATA_DIR, 'handbook.json');
 const TRUSTED_CHECK_DATABASE = path.join(DATA_DIR, 'trusted-check.json');
 
+// This bot never reads messages, presences, voice, threads, emojis, etc., so
+// there is no reason to keep any of that in memory. Guild members, roles and
+// channels (which the bot does use) keep the discord.js defaults.
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
   ],
+  makeCache: Options.cacheWithLimits({
+    ...Options.DefaultMakeCacheSettings,
+    MessageManager: 0,
+    PresenceManager: 0,
+    VoiceStateManager: 0,
+    StageInstanceManager: 0,
+    ThreadManager: 0,
+    ThreadMemberManager: 0,
+    GuildEmojiManager: 0,
+    GuildStickerManager: 0,
+    GuildScheduledEventManager: 0,
+    GuildInviteManager: 0,
+    GuildBanManager: 0,
+    // NOTE: do NOT zero ReactionManager. The weekly Trusted check reads
+    // message.reactions.resolve('✅'); an empty reaction cache would make the
+    // bot think nobody reacted and remove Trusted from everyone.
+    AutoModerationRuleManager: 0,
+    EntitlementManager: 0,
+    BaseGuildEmojiManager: 0,
+  }),
 });
 
 let db = {
