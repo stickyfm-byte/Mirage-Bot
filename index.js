@@ -667,13 +667,14 @@ async function postTrustedCheck(guild) {
   const deadline = startedAt + TRUSTED_CHECK_DEADLINE;
   const message = await channel.send({
     content:
+      `<@&${trustedRole.id}>\n\n` +
       '**MIRAGE | TRUSTED ROLE CHECK**\n\n' +
       'React to this message with **✅** within the next **24 hours** ' +
       'to keep your Trusted role.\n\n' +
       'If you do not react before the deadline, your **Trusted role will be removed**.\n\n' +
       `**Deadline:** <t:${Math.floor(deadline / 1000)}:F>\n\n` +
       'This is a mandatory weekly activity check.',
-    allowedMentions: { parse: [] },
+    allowedMentions: { roles: [trustedRole.id] },
   });
 
   await message.react(TRUSTED_CHECK_EMOJI);
