@@ -51,6 +51,7 @@ const {
   HANDBOOK_CHANNEL_ID = '',
   HANDBOOK_VERSION = '1.1',
   HANDBOOK_DEADLINE_HOURS = '24',
+  TRUSTED_CHECK_CHANNEL_ID = '',
 } = process.env;
 
 const HANDBOOK_URL =
@@ -69,6 +70,7 @@ const MAX_ATTEMPTS = 5;
 const DATA_DIR = path.join(__dirname, 'data');
 const VERIFICATION_DATABASE = path.join(DATA_DIR, 'verification.json');
 const HANDBOOK_DATABASE = path.join(DATA_DIR, 'handbook.json');
+const TRUSTED_CHECK_DATABASE = path.join(DATA_DIR, 'trusted-check.json');
 
 const client = new Client({
   intents: [
@@ -86,9 +88,17 @@ let handbookDB = {
   records: {},
 };
 
+let trustedCheckDB = {
+  nextRunAt: null,
+  activeCheck: null,
+};
+
 let verificationSaveQueue = Promise.resolve();
 let handbookSaveQueue = Promise.resolve();
+let trustedCheckSaveQueue = Promise.resolve();
 let deadlineTimer = null;
+let trustedCheckTimer = null;
+let trustedCheckRunning = false;
 
 // ========================================
 // SLASH COMMANDS
@@ -173,6 +183,13 @@ async function saveJSON(file, data, queueName) {
     return verificationSaveQueue;
   }
 
+  if (queueName === 'trusted') {
+    trustedCheckSaveQueue = trustedCheckSaveQueue
+      .catch(() => {})
+      .then(operation);
+    return trustedCheckSaveQueue;
+  }
+
   handbookSaveQueue = handbookSaveQueue
     .catch(() => {})
     .then(operation);
@@ -215,6 +232,26 @@ async function saveHandbookDatabase() {
     HANDBOOK_DATABASE,
     handbookDB,
     'handbook'
+  );
+}
+
+async function loadTrustedCheckDatabase() {
+  const parsed = await loadJSON(TRUSTED_CHECK_DATABASE, {
+    nextRunAt: null,
+    activeCheck: null,
+  });
+
+  trustedCheckDB = {
+    nextRunAt: parsed.nextRunAt || null,
+    activeCheck: parsed.activeCheck || null,
+  };
+}
+
+async function saveTrustedCheckDatabase() {
+  return saveJSON(
+    TRUSTED_CHECK_DATABASE,
+    trustedCheckDB,
+    'trusted'
   );
 }
 
@@ -575,6 +612,214 @@ async function reconcileModerators(guild) {
 }
 
 // ========================================
+// WEEKLY TRUSTED ROLE CHECK
+// ========================================
+
+const TRUSTED_CHECK_INTERVAL = 7 * 24 * 60 * 60 * 1000;
+const TRUSTED_CHECK_RANDOM_WINDOW = 24 * 60 * 60 * 1000;
+const TRUSTED_CHECK_DEADLINE = 24 * 60 * 60 * 1000;
+const TRUSTED_CHECK_EMOJI = '✅';
+
+function randomTrustedCheckDelay() {
+  return TRUSTED_CHECK_INTERVAL +
+    Math.floor(Math.random() * TRUSTED_CHECK_RANDOM_WINDOW);
+}
+
+async function postTrustedCheck(guild) {
+  if (!TRUSTED_CHECK_CHANNEL_ID) {
+    console.error('TRUSTED_CHECK_CHANNEL_ID is not configured.');
+    return;
+  }
+
+  const channel = await guild.channels.fetch(TRUSTED_CHECK_CHANNEL_ID).catch(() => null);
+  if (!channel?.isTextBased() || !channel.messages || !channel.send) {
+    throw new Error('Trusted check channel is missing or is not a text channel.');
+  }
+
+  const botMember = await guild.members.fetchMe();
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    throw new Error('The bot needs Manage Roles to run Trusted checks.');
+  }
+
+  const trustedRole = await guild.roles.fetch(TRUSTED_ROLE_ID);
+  if (!trustedRole) throw new Error('Trusted role could not be found.');
+  if (botMember.roles.highest.comparePositionTo(trustedRole) <= 0) {
+    throw new Error('Move the bot role above Trusted in the role hierarchy.');
+  }
+
+  await guild.members.fetch();
+  const memberIds = guild.members.cache
+    .filter(member => !member.user.bot && member.roles.cache.has(TRUSTED_ROLE_ID))
+    .map(member => member.id);
+
+  if (memberIds.length === 0) {
+    trustedCheckDB.nextRunAt = Date.now() + randomTrustedCheckDelay();
+    await saveTrustedCheckDatabase();
+    console.log('No Trusted members found; this weekly check was skipped.');
+    return;
+  }
+
+  const startedAt = Date.now();
+  const deadline = startedAt + TRUSTED_CHECK_DEADLINE;
+  const message = await channel.send({
+    content:
+      '**MIRAGE | TRUSTED ROLE CHECK**\n\n' +
+      'React to this message with **✅** within the next **24 hours** ' +
+      'to keep your Trusted role.\n\n' +
+      'If you do not react before the deadline, your **Trusted role will be removed**.\n\n' +
+      `**Deadline:** <t:${Math.floor(deadline / 1000)}:F>\n\n` +
+      'This is a mandatory weekly activity check.',
+    allowedMentions: { parse: [] },
+  });
+
+  await message.react(TRUSTED_CHECK_EMOJI);
+
+  trustedCheckDB.activeCheck = {
+    messageId: message.id,
+    channelId: channel.id,
+    startedAt,
+    deadline,
+    memberIds,
+  };
+  trustedCheckDB.nextRunAt = startedAt + randomTrustedCheckDelay();
+  await saveTrustedCheckDatabase();
+
+  console.log(`Trusted check posted for ${memberIds.length} members.`);
+}
+
+async function fetchTrustedReactors(message) {
+  const reaction = message.reactions.resolve(TRUSTED_CHECK_EMOJI);
+  if (!reaction) return new Set();
+
+  const reactors = new Set();
+  let after;
+
+  while (true) {
+    const batch = await reaction.users.fetch({
+      limit: 100,
+      ...(after ? { after } : {}),
+    });
+    if (batch.size === 0) break;
+
+    for (const user of batch.values()) {
+      if (!user.bot) reactors.add(user.id);
+    }
+
+    if (batch.size < 100) break;
+    after = batch.last().id;
+  }
+
+  return reactors;
+}
+
+async function finishTrustedCheck(guild) {
+  const check = trustedCheckDB.activeCheck;
+  if (!check || Date.now() < check.deadline) return;
+
+  const channel = await guild.channels.fetch(check.channelId).catch(() => null);
+  const message = channel?.messages
+    ? await channel.messages.fetch(check.messageId).catch(() => null)
+    : null;
+
+  // Never remove roles if the original message cannot be verified.
+  if (!message) {
+    console.error('Trusted check message unavailable; postponing the check by five minutes.');
+    check.deadline = Date.now() + 5 * 60 * 1000;
+    await saveTrustedCheckDatabase();
+    return;
+  }
+
+  const reactors = await fetchTrustedReactors(message);
+  const trustedRole = await guild.roles.fetch(TRUSTED_ROLE_ID);
+  const botMember = await guild.members.fetchMe();
+
+  if (!trustedRole || !botMember.permissions.has(PermissionFlagsBits.ManageRoles) ||
+      botMember.roles.highest.comparePositionTo(trustedRole) <= 0) {
+    throw new Error('Cannot safely remove Trusted: check role configuration and permissions.');
+  }
+
+  let retained = 0;
+  let removed = 0;
+  let failed = 0;
+
+  for (const userId of check.memberIds) {
+    if (reactors.has(userId)) {
+      retained++;
+      continue;
+    }
+
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member || !member.roles.cache.has(TRUSTED_ROLE_ID)) continue;
+
+    try {
+      await member.roles.remove(trustedRole, 'Did not react to the weekly Trusted role check within 24 hours');
+      removed++;
+      await member.send(
+        'Your **Trusted** role has been removed because you did not react to the weekly Mirage Trusted role check within 24 hours.'
+      ).catch(() => {});
+    } catch (error) {
+      failed++;
+      console.error(`Could not remove Trusted from ${userId}:`, error);
+    }
+  }
+
+  await message.reply({
+    content:
+      '**MIRAGE | TRUSTED ROLE CHECK COMPLETED**\n\n' +
+      `Members who kept Trusted: **${retained}**\n` +
+      `Trusted roles removed: **${removed}**` +
+      (failed ? `\nMembers needing manual review: **${failed}**` : ''),
+    allowedMentions: { parse: [] },
+  }).catch(() => {});
+
+  trustedCheckDB.activeCheck = null;
+  await saveTrustedCheckDatabase();
+  console.log(`Trusted check completed: ${retained} retained, ${removed} removed, ${failed} failed.`);
+}
+
+async function runTrustedCheckScheduler() {
+  if (trustedCheckRunning) return;
+  trustedCheckRunning = true;
+
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+
+    if (trustedCheckDB.activeCheck) {
+      await finishTrustedCheck(guild);
+      return;
+    }
+
+    if (!trustedCheckDB.nextRunAt) {
+      // First check is scheduled randomly within the next seven days.
+      trustedCheckDB.nextRunAt = Date.now() + Math.floor(Math.random() * TRUSTED_CHECK_INTERVAL);
+      await saveTrustedCheckDatabase();
+      console.log(`First Trusted check scheduled for ${new Date(trustedCheckDB.nextRunAt).toISOString()}.`);
+      return;
+    }
+
+    if (Date.now() >= trustedCheckDB.nextRunAt) {
+      await postTrustedCheck(guild);
+    }
+  } catch (error) {
+    console.error('Trusted role check scheduler error:', error);
+  } finally {
+    trustedCheckRunning = false;
+  }
+}
+
+async function startTrustedChecks() {
+  if (!TRUSTED_CHECK_CHANNEL_ID) {
+    console.warn('Weekly Trusted checks are disabled: TRUSTED_CHECK_CHANNEL_ID is not set.');
+    return;
+  }
+
+  await runTrustedCheckScheduler();
+  if (trustedCheckTimer) clearInterval(trustedCheckTimer);
+  trustedCheckTimer = setInterval(runTrustedCheckScheduler, 30 * 1000);
+  console.log('Weekly Trusted role checks are active.');
+}
+
+// ========================================
 // REGISTER SLASH COMMANDS
 // ========================================
 
@@ -603,6 +848,7 @@ client.once('ready', async () => {
     const guild = await client.guilds.fetch(GUILD_ID);
 
     await reconcileModerators(guild);
+    await startTrustedChecks();
 
     if (deadlineTimer) clearInterval(deadlineTimer);
 
@@ -1148,6 +1394,7 @@ client.on('interactionCreate', async interaction => {
   try {
     await loadDatabase();
     await loadHandbookDatabase();
+    await loadTrustedCheckDatabase();
     await registerCommands();
     await client.login(DISCORD_TOKEN);
   } catch (error) {
