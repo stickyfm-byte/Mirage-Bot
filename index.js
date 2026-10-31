@@ -251,6 +251,13 @@ const commands = [
         .setDescription('The recipient\'s name to display in the notice.')
         .setMaxLength(32)
         .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('message')
+        .setDescription('The custom paragraph to send to the recipient.')
+        .setMaxLength(3900)
+        .setRequired(true)
     ),
 ].map(command => command.toJSON());
 
@@ -1280,6 +1287,14 @@ client.on('interactionCreate', async interaction => {
 
       const userId = interaction.options.getString('user-id', true).trim();
       const displayName = interaction.options.getString('name', true).trim();
+      const customMessage = interaction.options.getString('message', true).trim();
+
+      if (!customMessage) {
+        return interaction.reply({
+          content: 'Please provide a message to send.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
 
       if (!/^\\d{17,20}$/.test(userId)) {
         return interaction.reply({
@@ -1296,24 +1311,8 @@ client.on('interactionCreate', async interaction => {
 
         const notice = new EmbedBuilder()
           .setColor(0x3498db)
-          .setTitle('MIRAGE | MEMBERSHIP TERMINATION')
-          .setDescription(
-            `Hello **${displayName}**,\n\n` +
-            'I am contacting you to formally inform you that, following a review ' +
-            'of evidence provided to Mirage Administration, your membership within ' +
-            'Mirage has been permanently terminated.\n\n' +
-            'Evidence was provided and subsequently verified showing that you shared ' +
-            'Nazi-related material. Having considered the circumstances and the context ' +
-            'surrounding the incident, we have determined that your actions are incompatible ' +
-            'with the standards and regulations upheld by Mirage.\n\n' +
-            'Although the incident did not take place within the Mirage server itself, ' +
-            'your position as both a Builder and Trusted member means that your conduct ' +
-            'and the expectations associated with those positions are taken seriously.\n\n' +
-            'This decision has not been made lightly. However, Mirage maintains a strict ' +
-            'position regarding extremist and discriminatory material, and we are not ' +
-            'prepared to make exceptions where such conduct has been established.\n\n' +
-            'Your removal is effective immediately. We wish you the best going forward.'
-          )
+          .setTitle('MIRAGE | OFFICIAL NOTICE')
+          .setDescription(`Hello **${displayName}**,\n\n${customMessage}`)
           .setFooter({ text: 'Mirage Administration' })
           .setTimestamp();
 
