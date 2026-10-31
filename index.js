@@ -232,6 +232,26 @@ const commands = [
     .setName('trusted-check')
     .setDescription('Manually start a Trusted role reaction check.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName('ban-notice')
+    .setDescription('Send a formal Mirage removal notice to a user by Discord ID.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option =>
+      option
+        .setName('user-id')
+        .setDescription('The recipient\'s Discord user ID.')
+        .setMinLength(17)
+        .setMaxLength(20)
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('name')
+        .setDescription('The recipient\'s name to display in the notice.')
+        .setMaxLength(32)
+        .setRequired(true)
+    ),
 ].map(command => command.toJSON());
 
 // ========================================
@@ -926,7 +946,7 @@ async function registerCommands() {
 
   console.log(
     'Registered commands: /verify-panel, /link, /verify-status, ' +
-    '/handbook-status, /handbook-resend, /trusted-check'
+    '/handbook-status, /handbook-resend, /trusted-check, /ban-notice'
   );
 }
 
@@ -1236,6 +1256,86 @@ client.on('interactionCreate', async interaction => {
         return interaction.editReply('The Trusted role check could not be started. Check the bot console for details.');
       } finally {
         trustedCheckRunning = false;
+      }
+    }
+
+    // ------------------------------------
+    // /BAN-NOTICE
+    // ------------------------------------
+
+    if (interaction.commandName === 'ban-notice') {
+      if (!interaction.inGuild()) {
+        return interaction.reply({
+          content: 'Use this command in the Mirage server.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+        return interaction.reply({
+          content: 'You need **Manage Server** permission to send a removal notice.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const userId = interaction.options.getString('user-id', true).trim();
+      const displayName = interaction.options.getString('name', true).trim();
+
+      if (!/^\\d{17,20}$/.test(userId)) {
+        return interaction.reply({
+          content: 'That does not appear to be a valid Discord user ID.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      try {
+        // Fetch by ID so the command also works after the recipient has been banned.
+        const targetUser = await client.users.fetch(userId);
+
+        const notice = new EmbedBuilder()
+          .setColor(0x3498db)
+          .setTitle('MIRAGE | MEMBERSHIP TERMINATION')
+          .setDescription(
+            `Hello **${displayName}**,\\n\\n` +
+            'I am contacting you to formally inform you that, following a review ' +
+            'of evidence provided to Mirage Administration, your membership within ' +
+            'Mirage has been permanently terminated.\\n\\n' +
+            'Evidence was provided and subsequently verified showing that you shared ' +
+            'Nazi-related material. Having considered the circumstances and the context ' +
+            'surrounding the incident, we have determined that your actions are incompatible ' +
+            'with the standards and regulations upheld by Mirage.\\n\\n' +
+            'Although the incident did not take place within the Mirage server itself, ' +
+            'your position as both a Builder and Trusted member means that your conduct ' +
+            'and the expectations associated with those positions are taken seriously.\\n\\n' +
+            'This decision has not been made lightly. However, Mirage maintains a strict ' +
+            'position regarding extremist and discriminatory material, and we are not ' +
+            'prepared to make exceptions where such conduct has been established.\\n\\n' +
+            'Your removal is effective immediately. We wish you the best going forward.'
+          )
+          .setFooter({ text: 'Mirage Administration' })
+          .setTimestamp();
+
+        await targetUser.send({
+          embeds: [notice],
+          allowedMentions: { parse: [] },
+        });
+
+        console.log(
+          `Ban notice sent to user ${userId} by ${interaction.user.tag}.`
+        );
+
+        return interaction.editReply(
+          `The formal Mirage removal notice was successfully sent to **${displayName}**.`
+        );
+      } catch (error) {
+        console.error(`Could not send ban notice to ${userId}:`, error);
+
+        return interaction.editReply(
+          'The notice could not be delivered. The user ID may be incorrect, ' +
+          'or the recipient may have direct messages disabled.'
+        );
       }
     }
 
