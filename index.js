@@ -1298,20 +1298,20 @@ client.on('interactionCreate', async interaction => {
           .setColor(0x3498db)
           .setTitle('MIRAGE | MEMBERSHIP TERMINATION')
           .setDescription(
-            `Hello **${displayName}**,\\n\\n` +
+            `Hello **${displayName}**,\n\n` +
             'I am contacting you to formally inform you that, following a review ' +
             'of evidence provided to Mirage Administration, your membership within ' +
-            'Mirage has been permanently terminated.\\n\\n' +
+            'Mirage has been permanently terminated.\n\n' +
             'Evidence was provided and subsequently verified showing that you shared ' +
             'Nazi-related material. Having considered the circumstances and the context ' +
             'surrounding the incident, we have determined that your actions are incompatible ' +
-            'with the standards and regulations upheld by Mirage.\\n\\n' +
+            'with the standards and regulations upheld by Mirage.\n\n' +
             'Although the incident did not take place within the Mirage server itself, ' +
             'your position as both a Builder and Trusted member means that your conduct ' +
-            'and the expectations associated with those positions are taken seriously.\\n\\n' +
+            'and the expectations associated with those positions are taken seriously.\n\n' +
             'This decision has not been made lightly. However, Mirage maintains a strict ' +
             'position regarding extremist and discriminatory material, and we are not ' +
-            'prepared to make exceptions where such conduct has been established.\\n\\n' +
+            'prepared to make exceptions where such conduct has been established.\n\n' +
             'Your removal is effective immediately. We wish you the best going forward.'
           )
           .setFooter({ text: 'Mirage Administration' })
