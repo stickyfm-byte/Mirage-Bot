@@ -1296,7 +1296,7 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
-      if (!/^\\d{17,20}$/.test(userId)) {
+      if (!/^\d{17,20}$/.test(userId)) {
         return interaction.reply({
           content: 'That does not appear to be a valid Discord user ID.',
           flags: MessageFlags.Ephemeral,
