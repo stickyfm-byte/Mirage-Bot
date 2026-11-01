@@ -269,6 +269,26 @@ function registerActor(clientInstance) {
         console.warn("Actor agreement system is disabled: ACTOR_ROLE_ID is not configured.");
         return;
       }
+
+      // Reconcile any Actor members already present in the gateway cache.
+      // This also catches assignments made while the bot was offline when
+      // those members are available in cache, without fetching the whole guild.
+      const guild = await client.guilds.fetch(CONFIG.guildId);
+      for (const member of guild.members.cache.values()) {
+        if (member.user.bot || !member.roles.cache.has(CONFIG.actorRoleId)) continue;
+        if (hasCurrentAcceptance(member.id)) continue;
+
+        try {
+          if (records[member.id]?.status === "declined") {
+            await removeActorRole(member, "Actor agreement was previously declined");
+          } else {
+            await startAgreement(member);
+          }
+        } catch (error) {
+          console.error("Could not reconcile Actor agreement for " + member.user.tag + ":", error);
+        }
+      }
+
       console.log("Mirage Actor agreement system is active.");
     } catch (error) {
       console.error("Could not initialise Actor agreement database:", error);
