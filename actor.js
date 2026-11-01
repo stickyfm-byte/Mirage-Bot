@@ -116,7 +116,7 @@ async function sendAgreement(member) {
 async function startAgreement(member, { force = false } = {}) {
   if (!CONFIG.actorRoleId || !CONFIG.pendingActorRoleId || member.user.bot || member.guild.id !== CONFIG.guildId) return;
   const existing = records[member.id];
-  if (hasCurrentAcceptance(member.id)) return;
+  if (hasCurrentAcceptance(member.id) && !force) return;
 
   if (existing?.status === "declined" && !force) {
     await removeActorRole(member, "Actor agreement was previously declined");
@@ -138,6 +138,7 @@ async function startAgreement(member, { force = false } = {}) {
     acceptedAt: null,
     declinedAt: null,
     enabledBy: force ? (existing?.enabledBy || null) : null,
+    rolloutVersion: CONFIG.version,
   };
   await saveDB();
   await removeActorRole(member, "Actor agreement acceptance required");
@@ -295,19 +296,22 @@ function registerActor(clientInstance) {
         return;
       }
 
-      // Reconcile any Actor members already present in the gateway cache.
-      // This also catches assignments made while the bot was offline when
-      // those members are available in cache, without fetching the whole guild.
+      // Fetch all guild members so every current Actor receives the rollout.
       const guild = await client.guilds.fetch(CONFIG.guildId);
+      await guild.members.fetch();
+
       for (const member of guild.members.cache.values()) {
         if (member.user.bot || !member.roles.cache.has(CONFIG.actorRoleId)) continue;
-        if (hasCurrentAcceptance(member.id)) continue;
 
         try {
-          if (records[member.id]?.status === "declined") {
+          const record = records[member.id];
+          if (record?.status === "declined") {
             await removeActorRole(member, "Actor agreement was previously declined");
             await removePendingActorRole(member, "Actor agreement was declined");
-          } else {
+          } else if (record?.rolloutVersion !== CONFIG.version) {
+            // Require every existing Actor to respond to this rollout once.
+            await startAgreement(member, { force: true });
+          } else if (record?.status === "pending") {
             await startAgreement(member);
           }
         } catch (error) {
