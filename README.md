@@ -51,3 +51,19 @@ Administrator commands (requires **Manage Server**):
 A declined member cannot restore the Actor role by having it manually reassigned. An administrator must first use `/actor-agreement-enable`. Agreement records are stored in `data/actor-agreement.json`.
 
 Place the bot's highest role above both the Actor and Pending Actor roles and ensure it has **Manage Roles** permission. Members must be able to receive direct messages from the server.
+
+
+## Opt-in bot DM history
+
+The bot includes an administrator-only `/chat-history user:@Member` command. It displays up to the 15 most recent text messages that a member has sent to the bot in DMs. The bot stores at most the latest 100 text messages per consenting user. Server-channel messages and attachments are not recorded by this feature.
+
+**Discord Developer Portal requirement:** enable **Message Content Intent** under your bot's Privileged Gateway Intents. The bot also requests the Direct Messages gateway intent. Without Message Content Intent, Discord will not provide the DM text needed by this feature.
+
+Recording is opt-in. On first contact, the bot explains the feature and asks the user to send `START` to display the consent buttons. Messages are only saved after the user selects **I Agree**. Selecting **I Do Not Agree** leaves recording disabled.
+
+Users can send:
+- `STOP` — stop recording future messages. Previously stored history remains.
+- `DELETE` — delete their stored history and turn recording off.
+- `START` — review the notice and opt in again.
+
+Only members with the Discord **Administrator** permission can use `/chat-history`. Results are sent ephemerally. Store the bot's `data/` directory securely on persistent hosting storage, restrict access to it, and establish an appropriate retention policy for your community.
