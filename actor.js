@@ -77,13 +77,13 @@ function agreementEmbed() {
     .setColor(0x3498db)
     .setTitle("MIRAGE | ACTOR AGREEMENT")
     .setDescription(
-      "You have been assigned the **Actor** role in Mirage. Before your role can be activated, you must read and respond to both documents below.\\n\\n" +
-      "📄 **[Actor End User Licence Agreement](" + CONFIG.eulaUrl + ")**\\n" +
-      "📘 **[Actor Regulations & Code of Conduct](" + CONFIG.regulationsUrl + ")**\\n\\n" +
-      "**Please read both documents in full before responding.**\\n\\n" +
-      "By selecting **I Agree**, you confirm that you have read, understood and agree to follow both documents. Your Actor role will then be restored.\\n\\n" +
-      "If you select **I Disagree**, your Actor role will remain removed and you will not be able to accept again unless an administrator re-enables the agreement for you.\\n\\n" +
-      "**Minimum age:** 14+\\n**Agreement version:** " + CONFIG.version
+      "You have been assigned the **Actor** role in Mirage. Before your role can be activated, you must read and respond to both documents below.\n\n" +
+      "📄 **[Actor End User Licence Agreement](" + CONFIG.eulaUrl + ")**\n" +
+      "📘 **[Actor Regulations & Code of Conduct](" + CONFIG.regulationsUrl + ")**\n\n" +
+      "**Please read both documents in full before responding.**\n\n" +
+      "By selecting **I Agree**, you confirm that you have read, understood and agree to follow both documents. Your Actor role will then be restored.\n\n" +
+      "If you select **I Disagree**, your Actor role will remain removed and you will not be able to accept again unless an administrator re-enables the agreement for you.\n\n" +
+      "**Minimum age:** 14+\n**Agreement version:** " + CONFIG.version
     )
     .setFooter({ text: "Mirage • Actor participation requires agreement" })
     .setTimestamp();
@@ -223,7 +223,7 @@ function registerActor(clientInstance) {
         const acceptedAt = record.acceptedAt ? "<t:" + Math.floor(record.acceptedAt / 1000) + ":F>" : "Not recorded";
         const declinedAt = record.declinedAt ? "<t:" + Math.floor(record.declinedAt / 1000) + ":F>" : "Not recorded";
         return interaction.reply({
-          content: "**Member:** " + target.tag + "\\n**Status:** " + record.status + "\\n**Version:** " + record.version + "\\n**Accepted:** " + acceptedAt + "\\n**Declined:** " + declinedAt,
+          content: "**Member:** " + target.tag + "\n**Status:** " + record.status + "\n**Version:** " + record.version + "\n**Accepted:** " + acceptedAt + "\n**Declined:** " + declinedAt,
           flags: MessageFlags.Ephemeral,
         });
       }
