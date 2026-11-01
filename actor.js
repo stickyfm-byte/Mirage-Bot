@@ -8,6 +8,7 @@ const path = require("node:path");
 const CONFIG = {
   guildId: process.env.GUILD_ID,
   actorRoleId: process.env.ACTOR_ROLE_ID || "",
+  pendingActorRoleId: process.env.PENDING_ACTOR_ROLE_ID || "",
   version: process.env.ACTOR_AGREEMENT_VERSION || "1.0",
   eulaUrl: "https://docs.google.com/document/d/1x1YsOs-Nk7RXeh9mAdWeeFnTPjYznqmlnn-vRT_WHxM/edit",
   regulationsUrl: "https://docs.google.com/document/d/1cX0b4oiThucX00KVYpucKVVnHigPYfWNfhrKTy0k1qw/edit",
@@ -48,20 +49,39 @@ function hasCurrentAcceptance(userId) {
 
 async function getActorRole(guild) {
   if (!CONFIG.actorRoleId) throw new Error("ACTOR_ROLE_ID is not configured.");
+  if (!CONFIG.pendingActorRoleId) throw new Error("PENDING_ACTOR_ROLE_ID is not configured.");
   const role = await guild.roles.fetch(CONFIG.actorRoleId);
+  const pendingRole = await guild.roles.fetch(CONFIG.pendingActorRoleId);
   if (!role) throw new Error("The configured Actor role could not be found. Check ACTOR_ROLE_ID.");
+  if (!pendingRole) throw new Error("The configured Pending Actor role could not be found. Check PENDING_ACTOR_ROLE_ID.");
   const botMember = await guild.members.fetchMe();
   if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
     throw new Error("The bot needs the Manage Roles permission.");
   }
-  if (botMember.roles.highest.comparePositionTo(role) <= 0) {
-    throw new Error("Move the bot's highest role above Actor in Server Settings > Roles.");
+  if (botMember.roles.highest.comparePositionTo(role) <= 0 ||
+      botMember.roles.highest.comparePositionTo(pendingRole) <= 0) {
+    throw new Error("Move the bot's highest role above both Actor and Pending Actor in Server Settings > Roles.");
   }
   return role;
 }
 
+async function getPendingActorRole(guild) {
+  await getActorRole(guild);
+  return guild.roles.fetch(CONFIG.pendingActorRoleId);
+}
+
 async function removeActorRole(member, reason) {
   const role = await getActorRole(member.guild);
+  if (member.roles.cache.has(role.id)) await member.roles.remove(role, reason);
+}
+
+async function addPendingActorRole(member, reason) {
+  const role = await getPendingActorRole(member.guild);
+  if (!member.roles.cache.has(role.id)) await member.roles.add(role, reason);
+}
+
+async function removePendingActorRole(member, reason) {
+  const role = await getPendingActorRole(member.guild);
   if (member.roles.cache.has(role.id)) await member.roles.remove(role, reason);
 }
 
@@ -94,18 +114,20 @@ async function sendAgreement(member) {
 }
 
 async function startAgreement(member, { force = false } = {}) {
-  if (!CONFIG.actorRoleId || member.user.bot || member.guild.id !== CONFIG.guildId) return;
+  if (!CONFIG.actorRoleId || !CONFIG.pendingActorRoleId || member.user.bot || member.guild.id !== CONFIG.guildId) return;
   const existing = records[member.id];
   if (hasCurrentAcceptance(member.id)) return;
 
   if (existing?.status === "declined" && !force) {
     await removeActorRole(member, "Actor agreement was previously declined");
+    await removePendingActorRole(member, "Actor agreement was declined");
     await member.send("Your Actor agreement was previously declined. Your Actor role cannot be restored until a Mirage administrator re-enables the agreement.").catch(() => {});
     return;
   }
 
   if (existing?.status === "pending" && existing.version === CONFIG.version && !force) {
     await removeActorRole(member, "Actor agreement is awaiting a response");
+    await addPendingActorRole(member, "Actor agreement is awaiting a response");
     return;
   }
 
@@ -119,6 +141,7 @@ async function startAgreement(member, { force = false } = {}) {
   };
   await saveDB();
   await removeActorRole(member, "Actor agreement acceptance required");
+  await addPendingActorRole(member, "Awaiting Actor agreement acceptance");
 
   try {
     await sendAgreement(member);
@@ -149,7 +172,7 @@ function registerActor(clientInstance) {
   client = clientInstance;
 
   client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
-    if (!CONFIG.actorRoleId || newMember.guild.id !== CONFIG.guildId) return;
+    if (!CONFIG.actorRoleId || !CONFIG.pendingActorRoleId || newMember.guild.id !== CONFIG.guildId) return;
     const hadActor = oldMember.roles.cache.has(CONFIG.actorRoleId);
     const hasActor = newMember.roles.cache.has(CONFIG.actorRoleId);
     if (!hadActor && hasActor && !hasCurrentAcceptance(newMember.id)) {
@@ -181,6 +204,7 @@ function registerActor(clientInstance) {
 
         if (interaction.customId === "mirage_actor_disagree") {
           await removeActorRole(member, "Actor agreement declined");
+          await removePendingActorRole(member, "Actor agreement declined");
           record.status = "declined";
           record.declinedAt = Date.now();
           record.declinedBy = interaction.user.id;
@@ -195,6 +219,7 @@ function registerActor(clientInstance) {
         try {
           const role = await getActorRole(guild);
           await member.roles.add(role, "Accepted Mirage Actor Agreement v" + CONFIG.version);
+          await removePendingActorRole(member, "Actor agreement accepted");
         } catch (error) {
           record.status = "pending";
           record.acceptedAt = null;
@@ -265,8 +290,8 @@ function registerActor(clientInstance) {
   client.once(Events.ClientReady, async () => {
     try {
       await loadDB();
-      if (!CONFIG.actorRoleId) {
-        console.warn("Actor agreement system is disabled: ACTOR_ROLE_ID is not configured.");
+      if (!CONFIG.actorRoleId || !CONFIG.pendingActorRoleId) {
+        console.warn("Actor agreement system is disabled: configure both ACTOR_ROLE_ID and PENDING_ACTOR_ROLE_ID.");
         return;
       }
 
@@ -281,6 +306,7 @@ function registerActor(clientInstance) {
         try {
           if (records[member.id]?.status === "declined") {
             await removeActorRole(member, "Actor agreement was previously declined");
+            await removePendingActorRole(member, "Actor agreement was declined");
           } else {
             await startAgreement(member);
           }
