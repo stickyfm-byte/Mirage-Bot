@@ -136,9 +136,8 @@ const HANDBOOK_DATABASE = path.join(DATA_DIR, 'handbook.json');
 const TRUSTED_CHECK_DATABASE = path.join(DATA_DIR, 'trusted-check.json');
 const CHAT_HISTORY_DATABASE = path.join(DATA_DIR, 'chat-history.json');
 
-// This bot never reads messages, presences, voice, threads, emojis, etc., so
-// there is no reason to keep any of that in memory. Guild members, roles and
-// channels (which the bot does use) keep the discord.js defaults.
+// The bot only processes direct-message text for the opt-in chat-history
+// feature. It does not monitor server-channel messages, presences or voice.
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -1401,7 +1400,7 @@ client.on('interactionCreate', async interaction => {
       const target = interaction.options.getUser('user', true);
       const record = chatHistoryDB.users[target.id];
 
-      if (!record?.consented || !record.messages?.length) {
+      if (!record?.messages?.length) {
         return interaction.reply({
           content: `There is no recorded DM history for **${target.tag}**. They may not have opted in, or they may have deleted their history.`,
           flags: MessageFlags.Ephemeral,
