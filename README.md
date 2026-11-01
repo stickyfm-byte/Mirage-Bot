@@ -31,11 +31,12 @@ Never commit `.env` or share your bot token. If a token is exposed, reset it in 
 
 ## Actor agreement system
 
-The bot includes a separate Actor agreement workflow. When the configured Actor role is assigned, the bot removes it temporarily and privately sends the member both Mirage Actor documents. The Actor role is restored only after the member selects **I Agree**.
+The bot includes a separate Actor agreement workflow. When the configured Actor role is assigned, the bot removes it temporarily, gives the member **Pending Actor**, and privately sends both Mirage Actor documents. The Pending Actor role is removed and the Actor role is restored only after the member selects **I Agree**. Members who decline have neither role until an administrator re-enables the agreement.
 
 Add this environment variable to your hosting panel:
 
 - `ACTOR_ROLE_ID` — the Discord ID of the Actor role.
+- `PENDING_ACTOR_ROLE_ID` — the Discord ID of the Pending Actor role (create this role in Discord first).
 
 Optional:
 
@@ -49,4 +50,4 @@ Administrator commands (requires **Manage Server**):
 
 A declined member cannot restore the Actor role by having it manually reassigned. An administrator must first use `/actor-agreement-enable`. Agreement records are stored in `data/actor-agreement.json`.
 
-Place the bot's highest role above the Actor role and ensure it has **Manage Roles** permission. Members must be able to receive direct messages from the server.
+Place the bot's highest role above both the Actor and Pending Actor roles and ensure it has **Manage Roles** permission. Members must be able to receive direct messages from the server.
