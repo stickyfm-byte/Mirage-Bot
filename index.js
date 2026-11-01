@@ -134,6 +134,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const VERIFICATION_DATABASE = path.join(DATA_DIR, 'verification.json');
 const HANDBOOK_DATABASE = path.join(DATA_DIR, 'handbook.json');
 const TRUSTED_CHECK_DATABASE = path.join(DATA_DIR, 'trusted-check.json');
+const CHAT_HISTORY_DATABASE = path.join(DATA_DIR, 'chat-history.json');
 
 // This bot never reads messages, presences, voice, threads, emojis, etc., so
 // there is no reason to keep any of that in memory. Guild members, roles and
@@ -142,7 +143,10 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent,
   ],
+  partials: [require('discord.js').Partials.Channel],
   makeCache: Options.cacheWithLimits({
     ...Options.DefaultMakeCacheSettings,
     MessageManager: 0,
@@ -180,6 +184,9 @@ let trustedCheckDB = {
   nextRunAt: null,
   activeCheck: null,
 };
+
+let chatHistoryDB = { users: {} };
+let chatHistorySaveQueue = Promise.resolve();
 
 let verificationSaveQueue = Promise.resolve();
 let handbookSaveQueue = Promise.resolve();
@@ -237,6 +244,17 @@ const commands = [
     .setName('trusted-check')
     .setDescription('Manually start a Trusted role reaction check.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName('chat-history')
+    .setDescription('View a member\'s messages sent to the Mirage bot in DMs.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The member whose bot DM history you want to view.')
+        .setRequired(true)
+    ),
 
   new SlashCommandBuilder()
     .setName('ban-notice')
@@ -357,6 +375,27 @@ async function saveHandbookDatabase() {
     handbookDB,
     'handbook'
   );
+}
+
+async function loadChatHistoryDatabase() {
+  const parsed = await loadJSON(CHAT_HISTORY_DATABASE, { users: {} });
+  chatHistoryDB = {
+    users: parsed.users && typeof parsed.users === 'object' ? parsed.users : {},
+  };
+}
+
+async function saveChatHistoryDatabase() {
+  const operation = async () => {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    const temp = `${CHAT_HISTORY_DATABASE}.tmp`;
+    await fs.writeFile(temp, JSON.stringify(chatHistoryDB, null, 2), {
+      mode: 0o600,
+    });
+    await fs.rename(temp, CHAT_HISTORY_DATABASE);
+  };
+
+  chatHistorySaveQueue = chatHistorySaveQueue.catch(() => {}).then(operation);
+  return chatHistorySaveQueue;
 }
 
 async function loadTrustedCheckDatabase() {
@@ -1021,8 +1060,135 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 // INTERACTIONS
 // ========================================
 
+client.on('messageCreate', async message => {
+  if (message.author.bot || message.guild) return;
+
+  const userId = message.author.id;
+  const content = (message.content || '').trim();
+
+  try {
+    let record = chatHistoryDB.users[userId];
+
+    if (content.toUpperCase() === 'START' && (!record || !record.consented)) {
+      await message.reply({
+        content:
+          '**MIRAGE BOT | DM RECORDING NOTICE**\n\n' +
+          'If you choose to continue, text messages you send to this bot in DMs may be stored for support and moderation purposes. ' +
+          'Only authorised Mirage administrators can view recorded messages through a restricted command.\n\n' +
+          'Your messages will not be recorded unless you select **I Agree** below. ' +
+          'You can stop future recording at any time by sending `STOP`, or request deletion of your stored history by sending `DELETE`. ' +
+          'Images, files and other attachments are not stored by this feature.',
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId('mirage_chat_history_consent')
+              .setLabel('I Agree')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId('mirage_chat_history_decline')
+              .setLabel('I Do Not Agree')
+              .setStyle(ButtonStyle.Secondary)
+          ),
+        ],
+      });
+      return;
+    }
+
+    if (!record) {
+      await message.reply({
+        content:
+          '**MIRAGE BOT | DM RECORDING NOTICE**\n\n' +
+          'This bot can only record DM messages after you have been informed and chosen to agree. ' +
+          'Send `START` if you would like to review the notice and choose whether to participate.',
+      });
+      return;
+    }
+
+    if (content.toUpperCase() === 'STOP') {
+      record.consented = false;
+      record.stoppedAt = new Date().toISOString();
+      await saveChatHistoryDatabase();
+      await message.reply('Recording has been stopped. Previously stored messages have not been deleted. Send `DELETE` if you also want your stored history erased.');
+      return;
+    }
+
+    if (content.toUpperCase() === 'DELETE') {
+      delete chatHistoryDB.users[userId];
+      await saveChatHistoryDatabase();
+      await message.reply('Your stored Mirage bot DM history has been deleted. Recording is now off. Send `START` if you want to review the notice and opt in again.');
+      return;
+    }
+
+    if (!record.consented) {
+      if (content.toUpperCase() === 'START') return;
+      await message.reply('DM recording is currently off for your account. Send `START` to review the notice and choose whether to opt in.');
+      return;
+    }
+
+    if (!content) return;
+
+    record.messages ||= [];
+    record.messages.push({
+      content: content.slice(0, 4000),
+      createdAt: message.createdAt.toISOString(),
+    });
+
+    if (record.messages.length > 100) {
+      record.messages = record.messages.slice(-100);
+    }
+
+    await saveChatHistoryDatabase();
+  } catch (error) {
+    console.error(`DM history processing failed for user ${userId}:`, error);
+  }
+});
+
+// ========================================
+// INTERACTIONS
+// ========================================
+
 client.on('interactionCreate', async interaction => {
   try {
+    if (
+      interaction.isButton() &&
+      ['mirage_chat_history_consent', 'mirage_chat_history_decline'].includes(interaction.customId)
+    ) {
+      if (interaction.inGuild()) {
+        return interaction.reply({
+          content: 'Please use this choice in your direct messages with the bot.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const userId = interaction.user.id;
+      const existing = chatHistoryDB.users[userId] || { messages: [] };
+
+      if (interaction.customId === 'mirage_chat_history_decline') {
+        chatHistoryDB.users[userId] = {
+          consented: false,
+          optedOutAt: new Date().toISOString(),
+          messages: [],
+        };
+        await saveChatHistoryDatabase();
+        return interaction.reply({
+          content: 'You have declined DM recording. Messages you send to this bot will not be stored.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      chatHistoryDB.users[userId] = {
+        ...existing,
+        consented: true,
+        consentedAt: new Date().toISOString(),
+        messages: existing.messages || [],
+      };
+      await saveChatHistoryDatabase();
+      return interaction.reply({
+        content: 'Thank you. New text messages you send to this bot in DMs may now be recorded. Send STOP to stop future recording, or DELETE to erase your stored history.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
     // ------------------------------------
     // HANDBOOK ACCEPT / DECLINE BUTTONS
     // ------------------------------------
@@ -1212,6 +1378,63 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (!interaction.isChatInputCommand()) return;
+
+    // ------------------------------------
+    // /CHAT-HISTORY
+    // ------------------------------------
+
+    if (interaction.commandName === 'chat-history') {
+      if (!interaction.inGuild()) {
+        return interaction.reply({
+          content: 'Use this command in the Mirage server.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+        return interaction.reply({
+          content: 'You need **Administrator** permission to view bot DM history.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const target = interaction.options.getUser('user', true);
+      const record = chatHistoryDB.users[target.id];
+
+      if (!record?.consented || !record.messages?.length) {
+        return interaction.reply({
+          content: `There is no recorded DM history for **${target.tag}**. They may not have opted in, or they may have deleted their history.`,
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const recent = record.messages.slice(-15);
+      const lines = recent.map(entry => {
+        const timestamp = Math.floor(Date.parse(entry.createdAt) / 1000);
+        const safeContent = String(entry.content || '')
+          .replace(/@/g, '@\u200b')
+          .slice(0, 220);
+        return `<t:${timestamp}:f>\n> ${safeContent || '[empty message]'}`;
+      });
+
+      const embed = new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle('MIRAGE | BOT DM HISTORY')
+        .setDescription(lines.join('\n\n').slice(0, 4000))
+        .addFields(
+          { name: 'Member', value: `${target.tag} (${target.id})` },
+          { name: 'Messages stored', value: String(record.messages.length), inline: true },
+          { name: 'Showing', value: `Latest ${recent.length}`, inline: true }
+        )
+        .setFooter({ text: 'Private administrative record • Text messages only' })
+        .setTimestamp();
+
+      return interaction.reply({
+        embeds: [embed],
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    }
 
     // ------------------------------------
     // /TRUSTED-CHECK
@@ -1660,6 +1883,10 @@ client.on('interactionCreate', async interaction => {
     console.log('[startup] Loading Trusted-check database...');
     await loadTrustedCheckDatabase();
     logMemory('after Trusted-check database');
+
+    console.log('[startup] Loading chat history database...');
+    await loadChatHistoryDatabase();
+    logMemory('after chat history database');
 
     console.log('[startup] Registering Discord slash commands...');
     await registerCommands();
