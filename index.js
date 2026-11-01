@@ -1,6 +1,8 @@
 
 require('dotenv').config();
 
+const { actorCommands, registerActor } = require('./actor');
+
 // ========================================
 // STARTUP DIAGNOSTICS
 // ========================================
@@ -163,6 +165,8 @@ const client = new Client({
   }),
 });
 
+registerActor(client);
+
 let db = {
   codes: {},
   records: {},
@@ -192,6 +196,7 @@ client.on('shardError', error => console.error('[discord] Gateway shard error:',
 // ========================================
 
 const commands = [
+  ...actorCommands,
   new SlashCommandBuilder()
     .setName('verify-panel')
     .setDescription('Post the Mirage verification panel.')
@@ -953,7 +958,8 @@ async function registerCommands() {
 
   console.log(
     'Registered commands: /verify-panel, /link, /verify-status, ' +
-    '/handbook-status, /handbook-resend, /trusted-check, /ban-notice'
+    '/handbook-status, /handbook-resend, /actor-agreement-status, ' +
+    '/actor-agreement-resend, /actor-agreement-enable, /trusted-check, /ban-notice'
   );
 }
 
