@@ -27,3 +27,26 @@ A starter Discord bot for Mirage SMP using Node.js and discord.js.
 `/verify` checks only whether a member has the `Trusted` role, then grants `Verified`. It does **not** verify Minecraft ownership. `/link` is an informational placeholder until a Minecraft plugin or another trusted verification method is connected.
 
 Never commit `.env` or share your bot token. If a token is exposed, reset it in the Discord Developer Portal.
+
+
+## Actor agreement system
+
+The bot includes a separate Actor agreement workflow. When the configured Actor role is assigned, the bot removes it temporarily and privately sends the member both Mirage Actor documents. The Actor role is restored only after the member selects **I Agree**.
+
+Add this environment variable to your hosting panel:
+
+- `ACTOR_ROLE_ID` — the Discord ID of the Actor role.
+
+Optional:
+
+- `ACTOR_AGREEMENT_VERSION` — agreement version recorded for each acceptance (defaults to `1.0`). Increase this when actors must accept a materially updated agreement.
+
+Administrator commands (requires **Manage Server**):
+
+- `/actor-agreement-status` — check your status; administrators may specify another member.
+- `/actor-agreement-resend` — resend an agreement that is still pending.
+- `/actor-agreement-enable` — allow a member who declined to respond again and send them a fresh agreement.
+
+A declined member cannot restore the Actor role by having it manually reassigned. An administrator must first use `/actor-agreement-enable`. Agreement records are stored in `data/actor-agreement.json`.
+
+Place the bot's highest role above the Actor role and ensure it has **Manage Roles** permission. Members must be able to receive direct messages from the server.
