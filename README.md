@@ -67,3 +67,25 @@ Users can send:
 - `START` — review the notice and opt in again.
 
 Only members with the Discord **Administrator** permission can use `/chat-history`. Results are sent ephemerally. Store the bot's `data/` directory securely on persistent hosting storage, restrict access to it, and establish an appropriate retention policy for your community.
+
+
+## DatHost Minecraft console bridge
+
+The bot can mirror a DatHost server console into a private Discord text channel and forward authorised messages from that channel to the Minecraft server.
+
+Add these environment variables to the bot host:
+
+- `DATHOST_EMAIL` — DatHost account email used for API authentication.
+- `DATHOST_PASSWORD` — DatHost account password. Keep this secret and never commit it.
+- `DATHOST_SERVER_ID` — the Minecraft server's DatHost ID.
+- `DATHOST_CONSOLE_CHANNEL_ID` — ID of the private Discord text channel used as the console.
+- `DATHOST_CONSOLE_ROLE_ID` — ID of the role permitted to send console commands.
+- `GUILD_ID` — the Discord server ID (already required by the bot).
+
+The bridge polls the DatHost console every five seconds and posts new output in Discord. Send a command as a normal message in the configured channel; a leading slash is optional. Commands are limited to one line and 500 characters, and each user has a short command cooldown. Members with Discord Administrator permission can also use the console.
+
+**Discord setup:** enable the bot's **Message Content Intent** in the Developer Portal. The bot needs View Channel, Send Messages, Read Message History and Add Reactions in the console channel. The configured console role should be assigned only to trusted server operators. Keep the channel private; console output can contain player names, IP addresses, plugin diagnostics or other operational information.
+
+**DatHost API:** the bridge uses DatHost's documented console backlog and send-line endpoints. DatHost API credentials are stored only as hosting environment variables, not in the repository. If the DatHost account or server does not expose the API console endpoints for the Minecraft server, the bridge will report the API error in the bot host logs and Discord.
+
+Start the bot using `npm start` so the preload bridge is loaded. Restart the bot after setting the environment variables.
